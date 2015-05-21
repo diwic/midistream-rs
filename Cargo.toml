@@ -1,0 +1,8 @@
+[package]
+name = "midistream"
+version = "0.1.0"
+authors = ["David Henningsson <diwic@ubuntu.com>"]
+license = "Apache-2.0/MIT"
+keywords = ["midi"]
+description = "Midi encode/decode"
+
