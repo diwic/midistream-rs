@@ -111,7 +111,7 @@ impl<I: Iterator<Item=SimpleMsg>> Iterator for SimpleMsgEncoder<I> {
 
 impl<I: Iterator<Item=SimpleMsg>> SimpleMsgEncoder<I> {
     fn from_buf(&mut self) -> Option<u8> {
-        if self.bufpos >= self.buflen { return None; } 
+        if self.bufpos >= self.buflen { return None; }
         let z = self.buf[self.bufpos];
         self.bufpos += 1;
         Some(z)
@@ -136,8 +136,6 @@ impl<I: Iterator<Item=SimpleMsg>> SimpleMsgEncoder<I> {
 }
 
 #[derive(Debug)]
-//pub struct SimpleMsgDecoder<'a, R: 'a + Read> {
-//    source: &'a mut R,
 pub struct SimpleMsgDecoder<I: Iterator<Item=u8>> {
     source: I,
     running_status: Option<u8>,
@@ -146,28 +144,10 @@ pub struct SimpleMsgDecoder<I: Iterator<Item=u8>> {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum MidiDecoderError {
-//    IoError(::std::io::Error),
     UnknownData(u8),
     Malformed,
     UnexpectedEOF,
 }
-
-/*
-impl<'a, R: 'a + Read> SimpleMsgDecoder<'a, R> {
-
-    fn read_u8(&mut self) -> Result<u8, MidiDecoderError> {
-        if let Some(s) = self.lost_status.take() {
-            return Ok(s)
-        };
-        let mut n: [u8; 1] = [0];
-        match self.source.read(&mut n) {
-            Err(e) => Err(MidiDecoderError::IoError(e)),
-            Ok(0) => { self.running_status = None; Err(MidiDecoderError::UnexpectedEOF) },
-            Ok(1) => Ok(n[0]),
-            _ => unreachable!(),
-        }
-    }
-*/
 
 impl<I: Iterator<Item=u8>> SimpleMsgDecoder<I> {
 
@@ -240,16 +220,11 @@ impl<I: Iterator<Item=u8>> SimpleMsgDecoder<I> {
         })
     }
 
-/*    pub fn new(reader: &'a mut R) -> SimpleMsgDecoder<'a, R> {
-        SimpleMsgDecoder { source: reader, running_status: None, lost_status: None }
-    }
-*/
     pub fn new(i: I) -> SimpleMsgDecoder<I> {
         SimpleMsgDecoder { source: i, running_status: None, lost_status: None }
     }
 }
 
-// impl<'a, R: 'a + Read> Iterator for SimpleMsgDecoder<'a, R> {
 impl<I: Iterator<Item=u8>> Iterator for SimpleMsgDecoder<I> {
     type Item = Result<SimpleMsg, MidiDecoderError>; // For now (to handle more complex stuff later)
 
