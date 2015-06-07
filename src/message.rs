@@ -74,13 +74,13 @@ pub enum ComplexMsg {
     NRPNChange(Parameter),
 }
 
-pub const SYSEXMSG_LEN: usize = 128;
+pub const SYSEXMSG_LEN: usize = 120;
 
 /// Sysex messages can be of any length. To ensure no
 /// memory allocation, messages longer than SYSEXMSG_LEN will
 /// be split up in more than one SysexMsg.
 pub struct SysexMsg {
-    buf: [u8; SYSEXMSG_LEN], // Buf includes 0xf0 and 0xf7 bytes, for efficiency
+    buf: [u8; SYSEXMSG_LEN], // Buf includes 0xf0 and 0xf7 bytes
     len: usize,
 }
 
@@ -420,13 +420,59 @@ impl<I: Iterator<Item=u8>> SimpleMsgDecoder<I> {
 }
 
 impl<I: Iterator<Item=u8>> Iterator for SimpleMsgDecoder<I> {
-    type Item = Result<SimpleMsg, MidiDecoderError>; // For now (to handle more complex stuff later)
+    type Item = Result<SimpleMsg, MidiDecoderError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.read_u8() {
             Err(MidiDecoderError::UnexpectedEOF) => None,
             Err(e) => Some(Err(e)),
             Ok(b) => Some(self.read_msg(b)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MsgDecoder<I: Iterator<Item=u8>> {
+    simple: SimpleMsgDecoder<I>,
+    sysex: SysexMsg,
+    in_sysex: bool,
+}
+
+impl<I: Iterator<Item=u8>> MsgDecoder<I> {
+    fn next_sysex(&mut self) -> Result<Msg, MidiDecoderError> {
+        while let Some(b) = self.simple.source.next() {
+            if b > 0x7f && b != 0xf7 {
+                self.in_sysex = false;
+                return Err(MidiDecoderError::Malformed);
+            }
+            self.sysex.buf[self.sysex.len] = b;
+            self.sysex.len += 1;
+            if b == 0xf7 { self.in_sysex = false; }
+            if !self.in_sysex || self.sysex.len >= SYSEXMSG_LEN {
+                let m = Ok(Msg::Sysex(self.sysex.clone()));
+                self.sysex.len = 0;
+                return m;
+            }
+        }
+        Err(MidiDecoderError::UnexpectedEOF)
+    }
+}
+
+impl<I: Iterator<Item=u8>> Iterator for MsgDecoder<I> {
+    type Item = Result<Msg, MidiDecoderError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.in_sysex { return Some(self.next_sysex()); }
+        match self.simple.next() {
+            Some(Err(MidiDecoderError::UnknownData(0xf0))) => {
+                self.in_sysex = true;
+                self.sysex.buf[0] = 0xf0;
+                self.sysex.len = 1;
+                Some(self.next_sysex())
+            }
+            Some(Ok(m)) => Some(Ok(Msg::Simple(m))),
+            Some(Err(e)) => Some(Err(e)),
+            None => None,
         }
     }
 }
