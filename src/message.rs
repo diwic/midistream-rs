@@ -1,4 +1,5 @@
 use super::types::*;
+use std::fmt;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Note {
@@ -73,6 +74,16 @@ pub enum ComplexMsg {
     NRPNChange(Parameter),
 }
 
+pub const SYSEXMSG_LEN: usize = 128;
+
+/// Sysex messages can be of any length. To ensure no
+/// memory allocation, messages longer than SYSEXMSG_LEN will
+/// be split up in more than one SysexMsg.
+pub struct SysexMsg {
+    buf: [u8; SYSEXMSG_LEN], // Buf includes 0xf0 and 0xf7 bytes, for efficiency
+    len: usize,
+}
+
 impl SimpleMsg {
     pub fn encode<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
         use self::SimpleMsg::*;
@@ -135,6 +146,41 @@ impl ComplexMsg {
                  SimpleMsg::control(n.channel, 0x26, *n.value.lsb()),
             ]),
         }
+    }
+}
+
+impl SysexMsg {
+    // Assumes b <= SYSEXMSG_LEN-2, will panic otherwise
+    pub fn new_short(b: &[U7]) -> SysexMsg {
+        let mut z = SysexMsg { buf: [0xf0; SYSEXMSG_LEN], len: 1 };
+        for a in (&mut z.buf[1..]).iter_mut().zip(b) { *a.0 = **a.1; z.len += 1 };
+        z.buf[z.len] = 0xf7;
+        z.len += 1;
+        z
+    }
+
+    pub fn encode<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
+        f(&self.buf[..self.len])
+    }
+
+    pub fn mmc_command(device: U7, command: U7) -> SysexMsg {
+        SysexMsg::new_short(&[0x7f.into(), device, 0x06.into(), command])
+    }
+}
+
+impl Clone for SysexMsg {
+    fn clone(&self) -> SysexMsg {
+        SysexMsg { buf: self.buf, len: self.len }
+    }
+}
+
+impl fmt::Debug for SysexMsg {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        try!(write!(f, "SysexMsg(0x{:x}", self.buf[0]));
+        for a in 1..self.len {
+            try!(write!(f, ",0x{:x}", self.buf[a]));
+        }
+        write!(f, ")")
     }
 }
 
@@ -312,6 +358,13 @@ mod test {
     fn test_encode_pitchbend() {
         let n = SimpleMsg::PitchBendChange(PitchBend { channel: 5.into(), value: 8192.into() });
         n.encode(|v| assert_eq!(v, &[0xe5, 0x00, 0x40]));
+    }
+
+    #[test]
+    fn test_sysex() {
+        let n = SysexMsg::mmc_command(0x7f.into(), 0x01.into());
+        // println!("{:?}", n);
+        n.encode(|v| assert_eq!(v, &[0xf0, 0x7f, 0x7f, 0x06, 0x01, 0xf7]));
     }
 
     #[test]
