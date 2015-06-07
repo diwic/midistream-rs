@@ -84,6 +84,13 @@ pub struct SysexMsg {
     len: usize,
 }
 
+#[derive(Debug, Clone)]
+pub enum Msg {
+    Simple(SimpleMsg),
+    Complex(ComplexMsg),
+    Sysex(SysexMsg),
+}
+
 impl SimpleMsg {
     pub fn encode<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
         use self::SimpleMsg::*;
@@ -203,6 +210,12 @@ impl<I: Iterator<Item=SimpleMsg>> SimpleMsgEncoder<I> {
             bufpos: 0,
         }
     }
+
+    pub fn drop_running_status(&mut self) {
+        if self.running_status.is_some() {
+           self.running_status = Some(None);
+        }
+    }
 }
 
 impl<I: Iterator<Item=SimpleMsg>> Iterator for SimpleMsgEncoder<I> {
@@ -239,6 +252,82 @@ impl<I: Iterator<Item=SimpleMsg>> SimpleMsgEncoder<I> {
         });
     }
 }
+
+struct MsgEncoderHelper([Option<SimpleMsg>; 4], usize);
+
+pub struct MsgEncoder<I: Iterator<Item=Msg>> {
+    source: I,
+    simple: SimpleMsgEncoder<MsgEncoderHelper>,
+    buf: [u8; SYSEXMSG_LEN],
+    bufpos: usize,
+    buflen: usize,
+}
+
+impl<I: Iterator<Item=Msg>> MsgEncoder<I> {
+    pub fn new(i: I, use_running_status: bool) -> MsgEncoder<I> {
+        MsgEncoder {
+            source: i,
+            simple: SimpleMsgEncoder::new(MsgEncoderHelper([None; 4], 0), use_running_status),
+            buf: [0; SYSEXMSG_LEN],
+            buflen: 0,
+            bufpos: 0,
+        }
+    }
+}
+
+impl Iterator for MsgEncoderHelper {
+    type Item = SimpleMsg;
+    fn next(&mut self) -> Option<SimpleMsg> {
+        if self.1 >= self.0.len() { None } else {
+            self.1 += 1;
+            self.0[self.1 - 1].take()
+        }
+    }
+}
+
+impl<I: Iterator<Item=Msg>> Iterator for MsgEncoder<I> {
+    type Item = u8;
+    fn next(&mut self) -> Option<u8> {
+        self.from_buf().or_else(|| {
+            self.to_buf();
+            self.from_buf()
+        })
+    }
+}
+
+impl<I: Iterator<Item=Msg>> MsgEncoder<I> {
+    fn from_buf(&mut self) -> Option<u8> {
+        if self.bufpos >= self.buflen { return self.simple.next(); }
+        let z = self.buf[self.bufpos];
+        self.bufpos += 1;
+        Some(z)
+    }
+
+    fn copy<'a, B: Iterator<Item=&'a u8>>(&mut self, b: B) {
+        for a in self.buf[self.bufpos..].iter_mut().zip(b) {
+            *a.0 = *a.1;
+            self.buflen += 1
+        }
+    }
+
+    fn to_buf(&mut self) {
+        let i = if let Some(i) = self.source.next() { i } else { return };
+        self.bufpos = 0;
+        self.buflen = 0;
+        match i {
+            Msg::Sysex(n) => {
+                self.simple.drop_running_status();
+                n.encode(|b| self.copy(b.iter()));
+            },
+            Msg::Complex(n) => n.encode(|s| {
+                let mut f = s.iter().map(|x| *x);
+                self.simple.source = MsgEncoderHelper([f.next(), f.next(), f.next(), f.next()], 0);
+            }),
+            Msg::Simple(n) => self.simple.source = MsgEncoderHelper([Some(n), None, None, None], 0),
+        }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct SimpleMsgDecoder<I: Iterator<Item=u8>> {
@@ -376,5 +465,25 @@ mod test {
         let enc = SimpleMsgEncoder::new(n.iter().map(|x| *x), true);
         let v: Vec<u8> = enc.collect();
         assert_eq!(v, &[0xe3, 0x00, 0x40, 0x93, 0x60, 0x64, 0x60, 0x00]);
+    }
+
+    #[test]
+    fn test_stream() {
+        let n = [
+            Msg::Simple(SimpleMsg::PitchBendChange(PitchBend { channel: 3.into(), value: 8192.into() })),
+            Msg::Simple(SimpleMsg::NoteOn(Note { channel: 3.into(), note: 0x60.into(), value: 0x64.into() })),
+            Msg::Simple(SimpleMsg::NoteOn(Note { channel: 3.into(), note: 0x60.into(), value: 0x00.into() })),
+            Msg::Complex(ComplexMsg::ControlChange14(Control14 { channel: 3.into(), control: 7.into(), value: 0x2000.into() })),
+        ];
+
+        let enc = MsgEncoder::new(n.iter().map(|x| x.clone()), true);
+        let v: Vec<u8> = enc.collect();
+        assert_eq!(v, &[
+            0xe3, 0x00, 0x40,
+            0x93, 0x60, 0x64,
+            0x60, 0x00,
+            0xb3, 0x07, 0x40,
+            0x27, 0x00,
+        ]);
     }
 }
