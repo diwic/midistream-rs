@@ -2,6 +2,9 @@ use std::convert::From;
 use std::ops::Deref;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct U5(u8);
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct U7(u8);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -18,6 +21,20 @@ impl From<u8> for U7 {
 }
 
 impl Deref for U7 {
+    type Target = u8;
+
+    #[inline]
+    fn deref(&self) -> &u8 { &self.0 }
+}
+
+impl From<u8> for U5 {
+    fn from(i: u8) -> U5 {
+        debug_assert!(i & 0xe0 == 0);
+        U5(i & 0x1f)
+    }
+}
+
+impl Deref for U5 {
     type Target = u8;
 
     #[inline]

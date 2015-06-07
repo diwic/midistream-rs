@@ -16,6 +16,13 @@ pub struct Control {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Control14 {
+    pub channel: Channel,
+    pub control: U5,
+    pub value: U14,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct ChannelValue {
     pub channel: Channel,
     pub value: U7,
@@ -24,6 +31,13 @@ pub struct ChannelValue {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PitchBend {
     pub channel: Channel,
+    pub value: U14,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Parameter {
+    pub channel: Channel,
+    pub parameter: U14,
     pub value: U14,
 }
 
@@ -52,6 +66,14 @@ pub enum SimpleMsg {
     SystemReset,
 }
 
+/// These message encode into more than one SimpleMsg.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum ComplexMsg {
+    ControlChange14(Control14),
+    RPNChange(Parameter),
+    NRPNChange(Parameter),
+}
+
 impl SimpleMsg {
     pub fn encode<W: Write>(&self, w: &mut W) -> ::std::io::Result<()> {
         use self::SimpleMsg::*;
@@ -74,6 +96,45 @@ impl SimpleMsg {
             &Stop => w.write_all(&[0xfc]),
             &ActiveSensing => w.write_all(&[0xfe]),
             &SystemReset => w.write_all(&[0xff]),
+        }
+    }
+
+    fn control(c: Channel, z: u8, v: u8) -> SimpleMsg {
+        SimpleMsg::ControlChange(Control { channel: c, control: z.into(), value: v.into() })
+    }
+
+    pub fn all_sound_off(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x78, 0) }
+    pub fn reset_all_controllers(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x79, 0) }
+    pub fn local_control(c: Channel, value: bool) -> SimpleMsg {
+        SimpleMsg::control(c, 0x7a, if value { 0x7f } else { 0 })
+    }
+    pub fn all_notes_off(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7b, 0) }
+    pub fn omni_off(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7c, 0) }
+    pub fn omni_on(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7d, 0) }
+    pub fn mono_mode(c: Channel, value: U7) -> SimpleMsg { SimpleMsg::control(c, 0x7e, *value) }
+    pub fn poly_mode(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7f, 0) }
+}
+
+impl ComplexMsg {
+    pub fn encode<R, F: FnOnce(&[SimpleMsg]) -> R>(&self, f: F) -> R {
+        use self::ComplexMsg::*;
+        match self {
+            &ControlChange14(ref n) => f(&[
+                 SimpleMsg::control(n.channel, *n.control, *n.value.msb()),
+                 SimpleMsg::control(n.channel, (*n.control + 0x20).into(), *n.value.lsb()),
+            ]),
+            &RPNChange(ref n) => f(&[
+                 SimpleMsg::control(n.channel, 0x65, *n.parameter.msb()),
+                 SimpleMsg::control(n.channel, 0x64, *n.parameter.lsb()),
+                 SimpleMsg::control(n.channel, 0x6, *n.value.msb()),
+                 SimpleMsg::control(n.channel, 0x26, *n.value.lsb()),
+            ]),
+            &NRPNChange(ref n) => f(&[
+                 SimpleMsg::control(n.channel, 0x63, *n.parameter.msb()),
+                 SimpleMsg::control(n.channel, 0x62, *n.parameter.lsb()),
+                 SimpleMsg::control(n.channel, 0x6, *n.value.msb()),
+                 SimpleMsg::control(n.channel, 0x26, *n.value.lsb()),
+            ]),
         }
     }
 }
