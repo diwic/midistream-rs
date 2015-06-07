@@ -1,5 +1,4 @@
 use super::types::*;
-use std::io::{Read, Write};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Note {
@@ -75,27 +74,27 @@ pub enum ComplexMsg {
 }
 
 impl SimpleMsg {
-    pub fn encode<W: Write>(&self, w: &mut W) -> ::std::io::Result<()> {
+    pub fn encode<R, F: FnOnce(&[u8]) -> R>(&self, f: F) -> R {
         use self::SimpleMsg::*;
         match self {
-            &NoteOff(ref n) => w.write_all(&[0x80 + *n.channel, *n.note, *n.value]),
-            &NoteOn(ref n) => w.write_all(&[0x90 + *n.channel, *n.note, *n.value]),
-            &PolyKeyPressure(ref n) => w.write_all(&[0xa0 + *n.channel, *n.note, *n.value]),
-            &ControlChange(ref n) => w.write_all(&[0xb0 + *n.channel, *n.control, *n.value]),
-            &ProgramChange(ref n) => w.write_all(&[0xc0 + *n.channel, *n.value]),
-            &ChannelKeyPressure(ref n) => w.write_all(&[0xd0 + *n.channel, *n.value]),
-            &PitchBendChange(ref n) => w.write_all(&[0xe0 + *n.channel, *n.value.lsb(), *n.value.msb()]),
+            &NoteOff(ref n) => f(&[0x80 + *n.channel, *n.note, *n.value]),
+            &NoteOn(ref n) => f(&[0x90 + *n.channel, *n.note, *n.value]),
+            &PolyKeyPressure(ref n) => f(&[0xa0 + *n.channel, *n.note, *n.value]),
+            &ControlChange(ref n) => f(&[0xb0 + *n.channel, *n.control, *n.value]),
+            &ProgramChange(ref n) => f(&[0xc0 + *n.channel, *n.value]),
+            &ChannelKeyPressure(ref n) => f(&[0xd0 + *n.channel, *n.value]),
+            &PitchBendChange(ref n) => f(&[0xe0 + *n.channel, *n.value.lsb(), *n.value.msb()]),
 
-            &MTCQuarterFrame(ref n) => w.write_all(&[0xf1, **n]),
-            &SongPositionPointer(ref n) => w.write_all(&[0xf2, *n.lsb(), *n.msb()]),
-            &SongSelect(ref n) => w.write_all(&[0xf3, **n]),
-            &TuneRequest => w.write_all(&[0xf6]),
-            &TimingClock => w.write_all(&[0xf8]),
-            &Start => w.write_all(&[0xfa]),
-            &Continue => w.write_all(&[0xfb]),
-            &Stop => w.write_all(&[0xfc]),
-            &ActiveSensing => w.write_all(&[0xfe]),
-            &SystemReset => w.write_all(&[0xff]),
+            &MTCQuarterFrame(ref n) => f(&[0xf1, **n]),
+            &SongPositionPointer(ref n) => f(&[0xf2, *n.lsb(), *n.msb()]),
+            &SongSelect(ref n) => f(&[0xf3, **n]),
+            &TuneRequest => f(&[0xf6]),
+            &TimingClock => f(&[0xf8]),
+            &Start => f(&[0xfa]),
+            &Continue => f(&[0xfb]),
+            &Stop => f(&[0xfc]),
+            &ActiveSensing => f(&[0xfe]),
+            &SystemReset => f(&[0xff]),
         }
     }
 
@@ -181,12 +180,11 @@ impl<I: Iterator<Item=SimpleMsg>> SimpleMsgEncoder<I> {
     fn to_buf(&mut self) {
         let i = if let Some(i) = self.source.next() { i } else { return };
         self.bufpos = 0;
-        self.buflen = {
-            let mut c = ::std::io::Cursor::new(&mut self.buf[..]);
-            i.encode(&mut c).unwrap();
-            c.position() as usize
-        };
-
+        self.buflen = 0;
+        i.encode(|b| for a in self.buf.iter_mut().zip(b) {
+            *a.0 = *a.1;
+            self.buflen += 1
+        });
         if self.buflen == 0 || self.running_status.is_none() { return }
         if self.running_status == Some(Some(self.buf[0])) { self.bufpos = 1 }
         self.running_status = Some(match self.buf[0] {
@@ -313,9 +311,7 @@ mod test {
     #[test]
     fn test_encode_pitchbend() {
         let n = SimpleMsg::PitchBendChange(PitchBend { channel: 5.into(), value: 8192.into() });
-        let mut v: Vec<u8> = vec!();
-        n.encode(&mut v).unwrap();
-        assert_eq!(v, &[0xe5, 0x00, 0x40]);
+        n.encode(|v| assert_eq!(v, &[0xe5, 0x00, 0x40]));
     }
 
     #[test]
