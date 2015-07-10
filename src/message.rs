@@ -116,7 +116,7 @@ impl SimpleMsg {
         }
     }
 
-    fn control(c: Channel, z: u8, v: u8) -> SimpleMsg {
+    fn control<C: Into<U7>, V: Into<U7>>(c: Channel, z: C, v: V) -> SimpleMsg {
         SimpleMsg::ControlChange(Control { channel: c, control: z.into(), value: v.into() })
     }
 
@@ -130,6 +130,35 @@ impl SimpleMsg {
     pub fn omni_on(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7d, 0) }
     pub fn mono_mode(c: Channel, value: U7) -> SimpleMsg { SimpleMsg::control(c, 0x7e, *value) }
     pub fn poly_mode(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7f, 0) }
+
+    pub fn note_on<C: Into<Channel>, N: Into<U7>, V: Into<U7>>(c: C, n: N, v: V) -> SimpleMsg {
+        SimpleMsg::NoteOn(Note { channel: c.into(), note: n.into(), value: v.into() })
+    }
+
+    pub fn note_off<C: Into<Channel>, N: Into<U7>, V: Into<U7>>(c: C, n: N, v: V) -> SimpleMsg {
+        SimpleMsg::NoteOff(Note { channel: c.into(), note: n.into(), value: v.into() })
+    }
+
+    pub fn poly_key_pressure<C: Into<Channel>, N: Into<U7>, V: Into<U7>>(c: C, n: N, v: V) -> SimpleMsg {
+        SimpleMsg::PolyKeyPressure(Note { channel: c.into(), note: n.into(), value: v.into() })
+    }
+
+    pub fn control_change<C: Into<Channel>, Z: Into<U7>, V: Into<U7>>(c: C, z: Z, v: V) -> SimpleMsg {
+        SimpleMsg::ControlChange(Control { channel: c.into(), control: z.into(), value: v.into() })
+    }
+
+    pub fn program_change<C: Into<Channel>, V: Into<U7>>(c: C, v: V) -> SimpleMsg {
+        SimpleMsg::ProgramChange(ChannelValue { channel: c.into(), value: v.into() })
+    }
+
+    pub fn channel_key_pressure<C: Into<Channel>, V: Into<U7>>(c: C, v: V) -> SimpleMsg {
+        SimpleMsg::ChannelKeyPressure(ChannelValue { channel: c.into(), value: v.into() })
+    }
+
+    pub fn pitch_bend_change<C: Into<Channel>, V: Into<U14>>(c: C, v: V) -> SimpleMsg {
+        SimpleMsg::PitchBendChange(PitchBend { channel: c.into(), value: v.into() })
+    }
+
 }
 
 impl ComplexMsg {
@@ -137,20 +166,20 @@ impl ComplexMsg {
         use self::ComplexMsg::*;
         match self {
             &ControlChange14(ref n) => f(&[
-                 SimpleMsg::control(n.channel, *n.control, *n.value.msb()),
-                 SimpleMsg::control(n.channel, (*n.control + 0x20).into(), *n.value.lsb()),
+                 SimpleMsg::control(n.channel, *n.control, n.value.msb()),
+                 SimpleMsg::control(n.channel, (*n.control + 0x20), n.value.lsb()),
             ]),
             &RPNChange(ref n) => f(&[
-                 SimpleMsg::control(n.channel, 0x65, *n.parameter.msb()),
-                 SimpleMsg::control(n.channel, 0x64, *n.parameter.lsb()),
-                 SimpleMsg::control(n.channel, 0x6, *n.value.msb()),
-                 SimpleMsg::control(n.channel, 0x26, *n.value.lsb()),
+                 SimpleMsg::control(n.channel, 0x65, n.parameter.msb()),
+                 SimpleMsg::control(n.channel, 0x64, n.parameter.lsb()),
+                 SimpleMsg::control(n.channel, 0x6, n.value.msb()),
+                 SimpleMsg::control(n.channel, 0x26, n.value.lsb()),
             ]),
             &NRPNChange(ref n) => f(&[
-                 SimpleMsg::control(n.channel, 0x63, *n.parameter.msb()),
-                 SimpleMsg::control(n.channel, 0x62, *n.parameter.lsb()),
-                 SimpleMsg::control(n.channel, 0x6, *n.value.msb()),
-                 SimpleMsg::control(n.channel, 0x26, *n.value.lsb()),
+                 SimpleMsg::control(n.channel, 0x63, n.parameter.msb()),
+                 SimpleMsg::control(n.channel, 0x62, n.parameter.lsb()),
+                 SimpleMsg::control(n.channel, 0x6, n.value.msb()),
+                 SimpleMsg::control(n.channel, 0x26, n.value.lsb()),
             ]),
         }
     }
@@ -170,8 +199,8 @@ impl SysexMsg {
         f(&self.buf[..self.len])
     }
 
-    pub fn mmc_command(device: U7, command: U7) -> SysexMsg {
-        SysexMsg::new_short(&[0x7f.into(), device, 0x06.into(), command])
+    pub fn mmc_command<D: Into<U7>, C: Into<U7>>(device: D, command: C) -> SysexMsg {
+        SysexMsg::new_short(&[0x7f.into(), device.into(), 0x06.into(), command.into()])
     }
 }
 
@@ -190,6 +219,10 @@ impl fmt::Debug for SysexMsg {
         write!(f, ")")
     }
 }
+
+impl From<SimpleMsg> for Msg { fn from(s: SimpleMsg) -> Msg { Msg::Simple(s) } }
+impl From<ComplexMsg> for Msg { fn from(s: ComplexMsg) -> Msg { Msg::Complex(s) } }
+impl From<SysexMsg> for Msg { fn from(s: SysexMsg) -> Msg { Msg::Sysex(s) } }
 
 #[derive(Debug)]
 pub struct SimpleMsgEncoder<I: Iterator<Item=SimpleMsg>> {
@@ -439,6 +472,12 @@ pub struct MsgDecoder<I: Iterator<Item=u8>> {
 }
 
 impl<I: Iterator<Item=u8>> MsgDecoder<I> {
+    pub fn new(i: I) -> MsgDecoder<I> { MsgDecoder {
+        simple: SimpleMsgDecoder::new(i),
+        sysex: SysexMsg::new_short(&[]),
+        in_sysex: false,
+    }}
+
     fn next_sysex(&mut self) -> Result<Msg, MidiDecoderError> {
         while let Some(b) = self.simple.source.next() {
             if b > 0x7f && b != 0xf7 {
@@ -486,7 +525,7 @@ mod test {
         let n = [0x93u8, 0x40, 0x64];
         let d = SimpleMsgDecoder::new(n.iter().map(|x| *x));
         let events: Vec<SimpleMsg> = d.map(|e| e.unwrap()).collect();
-        assert_eq!(&events, &[SimpleMsg::NoteOn(Note { channel: 3.into(), note: 0x40.into(), value: 0x64.into() })]);
+        assert_eq!(&events, &[SimpleMsg::note_on(3, 0x40, 0x64)]);
     }
 
     #[test]
@@ -497,7 +536,7 @@ mod test {
 
     #[test]
     fn test_sysex() {
-        let n = SysexMsg::mmc_command(0x7f.into(), 0x01.into());
+        let n = SysexMsg::mmc_command(0x7f, 0x01);
         // println!("{:?}", n);
         n.encode(|v| assert_eq!(v, &[0xf0, 0x7f, 0x7f, 0x06, 0x01, 0xf7]));
     }
@@ -505,9 +544,10 @@ mod test {
     #[test]
     fn test_encode_stream() {
         let n = [
-            SimpleMsg::PitchBendChange(PitchBend { channel: 3.into(), value: 8192.into() }),
-            SimpleMsg::NoteOn(Note { channel: 3.into(), note: 0x60.into(), value: 0x64.into() }),
-            SimpleMsg::NoteOn(Note { channel: 3.into(), note: 0x60.into(), value: 0x00.into() })];
+            SimpleMsg::pitch_bend_change(3, 8192),
+            SimpleMsg::note_on(3, 0x60, 0x64),
+            SimpleMsg::note_on(3, 0x60, 0x00),
+        ];
         let enc = SimpleMsgEncoder::new(n.iter().map(|x| *x), true);
         let v: Vec<u8> = enc.collect();
         assert_eq!(v, &[0xe3, 0x00, 0x40, 0x93, 0x60, 0x64, 0x60, 0x00]);
@@ -515,11 +555,11 @@ mod test {
 
     #[test]
     fn test_stream() {
-        let n = [
-            Msg::Simple(SimpleMsg::PitchBendChange(PitchBend { channel: 3.into(), value: 8192.into() })),
-            Msg::Simple(SimpleMsg::NoteOn(Note { channel: 3.into(), note: 0x60.into(), value: 0x64.into() })),
-            Msg::Simple(SimpleMsg::NoteOn(Note { channel: 3.into(), note: 0x60.into(), value: 0x00.into() })),
-            Msg::Complex(ComplexMsg::ControlChange14(Control14 { channel: 3.into(), control: 7.into(), value: 0x2000.into() })),
+        let n: [Msg; 4] = [
+            SimpleMsg::pitch_bend_change(3, 8192).into(),
+            SimpleMsg::note_on(3, 0x60, 0x64).into(),
+            SimpleMsg::note_on(3, 0x60, 0x00).into(),
+            ComplexMsg::ControlChange14(Control14 { channel: 3.into(), control: 7.into(), value: 0x2000.into() }).into(),
         ];
 
         let enc = MsgEncoder::new(n.iter().map(|x| x.clone()), true);
