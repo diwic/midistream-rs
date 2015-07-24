@@ -2,6 +2,6 @@
 
  * Non-allocating - suitable for Real-time usage
 
- * Cannot do Sysex yet.
+ * Currently sysex works only well with small ( < 120 bytes) messages
 
 License: Apache2.0/MIT

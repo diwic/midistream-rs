@@ -116,20 +116,18 @@ impl SimpleMsg {
         }
     }
 
-    fn control<C: Into<U7>, V: Into<U7>>(c: Channel, z: C, v: V) -> SimpleMsg {
-        SimpleMsg::ControlChange(Control { channel: c, control: z.into(), value: v.into() })
+    pub fn all_sound_off<C: Into<Channel>>(c: C) -> SimpleMsg { SimpleMsg::control_change(c, 0x78, 0) }
+    pub fn reset_all_controllers<C: Into<Channel>>(c: C) -> SimpleMsg { SimpleMsg::control_change(c, 0x79, 0) }
+    pub fn local_control<C: Into<Channel>>(c: C, value: bool) -> SimpleMsg {
+        SimpleMsg::control_change(c, 0x7a, if value { 0x7f } else { 0 })
     }
-
-    pub fn all_sound_off(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x78, 0) }
-    pub fn reset_all_controllers(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x79, 0) }
-    pub fn local_control(c: Channel, value: bool) -> SimpleMsg {
-        SimpleMsg::control(c, 0x7a, if value { 0x7f } else { 0 })
+    pub fn all_notes_off<C: Into<Channel>>(c: C) -> SimpleMsg { SimpleMsg::control_change(c, 0x7b, 0) }
+    pub fn omni_off<C: Into<Channel>>(c: C) -> SimpleMsg { SimpleMsg::control_change(c, 0x7c, 0) }
+    pub fn omni_on<C: Into<Channel>>(c: C) -> SimpleMsg { SimpleMsg::control_change(c, 0x7d, 0) }
+    pub fn mono_mode<C: Into<Channel>, V: Into<U7>>(c: C, value: V) -> SimpleMsg {
+        SimpleMsg::control_change(c, 0x7e, value)
     }
-    pub fn all_notes_off(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7b, 0) }
-    pub fn omni_off(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7c, 0) }
-    pub fn omni_on(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7d, 0) }
-    pub fn mono_mode(c: Channel, value: U7) -> SimpleMsg { SimpleMsg::control(c, 0x7e, *value) }
-    pub fn poly_mode(c: Channel) -> SimpleMsg { SimpleMsg::control(c, 0x7f, 0) }
+    pub fn poly_mode<C: Into<Channel>>(c: C) -> SimpleMsg { SimpleMsg::control_change(c, 0x7f, 0) }
 
     pub fn note_on<C: Into<Channel>, N: Into<U7>, V: Into<U7>>(c: C, n: N, v: V) -> SimpleMsg {
         SimpleMsg::NoteOn(Note { channel: c.into(), note: n.into(), value: v.into() })
@@ -166,22 +164,34 @@ impl ComplexMsg {
         use self::ComplexMsg::*;
         match self {
             &ControlChange14(ref n) => f(&[
-                 SimpleMsg::control(n.channel, *n.control, n.value.msb()),
-                 SimpleMsg::control(n.channel, (*n.control + 0x20), n.value.lsb()),
+                 SimpleMsg::control_change(n.channel, *n.control, n.value.msb()),
+                 SimpleMsg::control_change(n.channel, (*n.control + 0x20), n.value.lsb()),
             ]),
             &RPNChange(ref n) => f(&[
-                 SimpleMsg::control(n.channel, 0x65, n.parameter.msb()),
-                 SimpleMsg::control(n.channel, 0x64, n.parameter.lsb()),
-                 SimpleMsg::control(n.channel, 0x6, n.value.msb()),
-                 SimpleMsg::control(n.channel, 0x26, n.value.lsb()),
+                 SimpleMsg::control_change(n.channel, 0x65, n.parameter.msb()),
+                 SimpleMsg::control_change(n.channel, 0x64, n.parameter.lsb()),
+                 SimpleMsg::control_change(n.channel, 0x6, n.value.msb()),
+                 SimpleMsg::control_change(n.channel, 0x26, n.value.lsb()),
             ]),
             &NRPNChange(ref n) => f(&[
-                 SimpleMsg::control(n.channel, 0x63, n.parameter.msb()),
-                 SimpleMsg::control(n.channel, 0x62, n.parameter.lsb()),
-                 SimpleMsg::control(n.channel, 0x6, n.value.msb()),
-                 SimpleMsg::control(n.channel, 0x26, n.value.lsb()),
+                 SimpleMsg::control_change(n.channel, 0x63, n.parameter.msb()),
+                 SimpleMsg::control_change(n.channel, 0x62, n.parameter.lsb()),
+                 SimpleMsg::control_change(n.channel, 0x6, n.value.msb()),
+                 SimpleMsg::control_change(n.channel, 0x26, n.value.lsb()),
             ]),
         }
+    }
+
+    pub fn control_change_14<C: Into<Channel>, D: Into<U5>, V: Into<U14>>(c: C, d: D, v: V) -> ComplexMsg {
+        ComplexMsg::ControlChange14(Control14 { channel: c.into(), control: d.into(), value: v.into() })
+    }
+
+    pub fn rpn_change<C: Into<Channel>, D: Into<U14>, V: Into<U14>>(c: C, d: D, v: V) -> ComplexMsg {
+        ComplexMsg::RPNChange(Parameter { channel: c.into(), parameter: d.into(), value: v.into() })
+    }
+
+    pub fn nrpn_change<C: Into<Channel>, D: Into<U14>, V: Into<U14>>(c: C, d: D, v: V) -> ComplexMsg {
+        ComplexMsg::NRPNChange(Parameter { channel: c.into(), parameter: d.into(), value: v.into() })
     }
 }
 
@@ -559,7 +569,7 @@ mod test {
             SimpleMsg::pitch_bend_change(3, 8192).into(),
             SimpleMsg::note_on(3, 0x60, 0x64).into(),
             SimpleMsg::note_on(3, 0x60, 0x00).into(),
-            ComplexMsg::ControlChange14(Control14 { channel: 3.into(), control: 7.into(), value: 0x2000.into() }).into(),
+            ComplexMsg::control_change_14(3, 7, 0x2000).into(),
         ];
 
         let enc = MsgEncoder::new(n.iter().map(|x| x.clone()), true);

@@ -88,3 +88,18 @@ impl Deref for Channel {
     fn deref(&self) -> &u8 { &self.0 }
 }
 
+#[test]
+#[should_panic]
+fn out_of_range() {
+    let _: U7 = 129.into();
+}
+
+#[test]
+fn test_u14() {
+    let a = U7(0x40);
+    let b = U7(0x30);
+    let c: U14 = (b, a).into();
+    assert_eq!(c.msb(), a);
+    assert_eq!(c.lsb(), b);
+    assert_eq!(*c, 0x2030);
+}
